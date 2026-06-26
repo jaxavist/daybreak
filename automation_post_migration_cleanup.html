@@ -1,0 +1,174 @@
+<h1>Automation Rule Post-Migration Cleanup</h1>
+
+<p><strong>Source:</strong> DC Production (jira.daybreakgames.com) &mdash; 164 enabled automation rules<br/>
+<strong>Reference:</strong> Atlassian JCMA Automation Migration Support Matrix<br/>
+<strong>Generated:</strong> June 26, 2026</p>
+
+<hr/>
+
+<h2>Summary</h2>
+
+<table>
+<thead>
+<tr><th>Classification</th><th>Count</th><th>What It Means</th><th>Action Required</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>Partially Supported</strong></td><td>157</td><td>Rules migrate via JCMA but some steps may behave differently on Cloud</td><td>Review and test after migration, set flow actors</td></tr>
+<tr><td><strong>Unsupported</strong></td><td>1</td><td>Contains ScriptRunner Groovy &mdash; won't migrate</td><td>Disable on DC before migration, recreate on Cloud</td></tr>
+<tr><td><strong>Unknown (Re-fetch)</strong></td><td>6</td><td>Uses "Re-fetch work item data" &mdash; actually partially supported</td><td>Same as Partially Supported &mdash; review after migration</td></tr>
+</tbody>
+</table>
+
+<p><em>Note: 0 rules are "Fully Supported" because virtually every rule uses at least one trigger (e.g., Work item created, Work item transitioned) that Atlassian classifies as partially supported. This is normal and expected. "Partially supported" does NOT mean broken &mdash; it means "will migrate, verify after."</em></p>
+
+<hr/>
+
+<h2>Pre-Migration Action Items</h2>
+
+<table>
+<thead>
+<tr><th>#</th><th>Action</th><th>Owner</th><th>Status</th></tr>
+</thead>
+<tbody>
+<tr><td>1</td><td><strong>Disable "Set Start Date and End Date" rule on DC</strong> (SSSD project). Uses ScriptRunner Groovy action &mdash; unsupported on Cloud. Disable before running JCMA to prevent broken shell from migrating.</td><td>AVST</td><td></td></tr>
+<tr><td>2</td><td><strong>Verify Automation for Jira is built-in</strong> on DC 10.3.12 (it is &mdash; no plugin install needed). Confirm at Jira Admin &gt; System &gt; Automation.</td><td>AVST</td><td></td></tr>
+<tr><td>3</td><td><strong>Select "All automation flows"</strong> during JCMA migration to include both project-specific and global rules.</td><td>AVST</td><td></td></tr>
+</tbody>
+</table>
+
+<hr/>
+
+<h2>Post-Migration Action Items</h2>
+
+<h3>1. Set Flow Actors (All Rules)</h3>
+<p>JCMA does <strong>not</strong> migrate flow actors. Every rule needs its actor set on Cloud. Recommended: set to the Jira automation service account or the project admin.</p>
+<ul>
+<li>Navigate to each project's Automation settings</li>
+<li>Open each rule &gt; click the actor/owner dropdown &gt; select the appropriate user</li>
+<li>For service desk projects (ITSM, SSSD, FSD): ensure the actor has agent permissions</li>
+</ul>
+
+<h3>2. Review Partially Supported Steps</h3>
+<p>The following step types are classified as "partially supported" and appear across most rules. Verify each behaves as expected after migration:</p>
+
+<table>
+<thead>
+<tr><th>Step Type</th><th>Category</th><th>Rules Affected</th><th>What to Check</th></tr>
+</thead>
+<tbody>
+<tr><td>Work item created</td><td>Trigger</td><td>~40+</td><td>Verify trigger fires on issue creation. Check project scope is correct.</td></tr>
+<tr><td>Work item transitioned</td><td>Trigger</td><td>~50+</td><td>Verify from/to status IDs mapped correctly. Test a transition to confirm trigger fires.</td></tr>
+<tr><td>Field value changed</td><td>Trigger</td><td>~15</td><td>Verify the monitored field IDs mapped correctly. Test by editing the field.</td></tr>
+<tr><td>Multiple work item events</td><td>Trigger</td><td>~10</td><td>Verify event filters and project scopes.</td></tr>
+<tr><td>Scheduled</td><td>Trigger</td><td>~10</td><td>Verify JQL queries reference correct Cloud field/status names. Check cron schedules.</td></tr>
+<tr><td>Send email</td><td>Action</td><td>~60+</td><td>Verify recipients mapped correctly. "From" address will use Cloud default. Test delivery.</td></tr>
+<tr><td>Transition work item</td><td>Action</td><td>~25</td><td>Verify destination status IDs mapped correctly. Confirm workflow transitions exist on Cloud.</td></tr>
+<tr><td>Comment on work item</td><td>Action</td><td>~10</td><td>Verify comment visibility (internal vs public) settings preserved.</td></tr>
+<tr><td>Branch/related work item</td><td>Condition</td><td>~20</td><td>Verify JQL and link type references are correct.</td></tr>
+<tr><td>Work item assigned/commented</td><td>Trigger</td><td>~5</td><td>Verify trigger fires correctly on Cloud.</td></tr>
+</tbody>
+</table>
+
+<h3>3. Recreate Unsupported Rule</h3>
+
+<table>
+<thead>
+<tr><th>Rule Name</th><th>Project</th><th>Unsupported Step</th><th>Remediation</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>Set Start Date and End Date</strong></td><td>SSSD</td><td>ScriptRunner Groovy: <code>execute-script-issue-action-v2</code></td><td>Recreate using Cloud-native automation. The Groovy script calculates End Date from Start Date + Remaining Estimate with business day/weekend logic. Options: (1) Use ScriptRunner for Cloud if available, (2) Rebuild using smart values and date math in Cloud automation, (3) Accept manual End Date entry.</td></tr>
+</tbody>
+</table>
+
+<h3>4. Validate and Bulk-Enable Rules</h3>
+<p>All migrated rules arrive <strong>DISABLED</strong> on Cloud. Use the migration script to validate and enable in bulk:</p>
+
+<pre>
+# Step 1: Validate all rules against Cloud registries
+python3 migrate_automations.py --validate \
+    --target-site daybreakgames.atlassian.net \
+    --token "$JIRA_CLOUD_PROD_PAT"
+
+# Step 2: Fix any remaining ID mapping gaps
+python3 migrate_automations.py --fix \
+    --source-site jira.daybreakgames.com --source-is-dc \
+    --target-site daybreakgames.atlassian.net \
+    --dc-token "$JIRA_DC_PROD_PAT" --token "$JIRA_CLOUD_PROD_PAT"
+
+# Step 3: Repair known manual overrides (if needed)
+python3 migrate_automations.py --repair \
+    --target-site daybreakgames.atlassian.net \
+    --token "$JIRA_CLOUD_PROD_PAT"
+
+# Step 4: Enable all rules that pass validation
+python3 migrate_automations.py --enable-clean \
+    --target-site daybreakgames.atlassian.net \
+    --token "$JIRA_CLOUD_PROD_PAT"
+</pre>
+
+<h3>5. Verify Project Scoping</h3>
+<p>JCMA should preserve project scoping natively. However, if any rules end up globally scoped or on the wrong project, use the auto-rescope command with the DC export JSON:</p>
+
+<pre>
+python3 migrate_automations.py --auto-rescope \
+    --source-site jira.daybreakgames.com --source-is-dc \
+    --target-site daybreakgames.atlassian.net \
+    --dc-token "$JIRA_DC_PROD_PAT" --token "$JIRA_CLOUD_PROD_PAT" \
+    --dc-rules-json ~/daybreak-scripts/PROD_EXPORT.json
+</pre>
+
+<h3>6. Rules Requiring Special Attention</h3>
+
+<table>
+<thead>
+<tr><th>Rule Name</th><th>Project</th><th>Issue</th><th>Action</th></tr>
+</thead>
+<tbody>
+<tr><td>HR_Onboard Offboard Child Ticket Generation</td><td>SSSD</td><td>Uses "Re-fetch work item data" (6 instances)</td><td>Verify re-fetch actions work on Cloud. May need manual re-selection of fields.</td></tr>
+<tr><td>HR_Onboard Offboard Child Ticket Generation (for Contractors)</td><td>SSSD</td><td>Uses "Re-fetch work item data" (3 instances)</td><td>Same as above.</td></tr>
+<tr><td>QA Task to Test</td><td>MTGO</td><td>Uses "Re-fetch work item data"</td><td>Verify re-fetch action works on Cloud.</td></tr>
+<tr><td>Clone Epic Stories SubTasks</td><td>LP</td><td>Uses "Re-fetch work item data"</td><td>Verify re-fetch action works on Cloud.</td></tr>
+<tr><td>When Epic is cloned, clone child tickets as well (x2)</td><td>EQ, EQ2</td><td>Uses "Re-fetch work item data"</td><td>Verify re-fetch action works on Cloud.</td></tr>
+<tr><td>TEST</td><td>SSSD</td><td>Uses "Re-fetch work item data"</td><td>Consider deleting &mdash; may be a test rule.</td></tr>
+<tr><td>All Procurement_ rules (~40)</td><td>SSSD</td><td>Email actions, status transitions, field edits</td><td>Verify email recipients, status IDs, and custom field mappings. These are business-critical procurement workflows.</td></tr>
+<tr><td>All Marketing Licensing rules (~10)</td><td>SSSD</td><td>Multi-step approval workflows with transitions</td><td>Verify all transition statuses exist on Cloud and match the licensing workflow.</td></tr>
+</tbody>
+</table>
+
+<hr/>
+
+<h2>Known Issues from Test Migration (Lessons Learned)</h2>
+
+<table>
+<thead>
+<tr><th>Issue</th><th>Root Cause</th><th>Resolution</th></tr>
+</thead>
+<tbody>
+<tr><td>JSM Description field validation error on portal</td><td>JEditor on DC stored content differently than Cloud's ADF editor (JSDCLOUD-11377)</td><td>Reset Description renderer in JSM Field Configurations. Toggle "required" setting off/on.</td></tr>
+<tr><td>Email "from" address shows "automation" prefix</td><td>Cloud import auto-populates default email prefix</td><td>Accept default sender or configure custom prefix in Cloud automation settings.</td></tr>
+<tr><td>Microsoft Teams webhook actions</td><td>Unsupported by JCMA &mdash; won't migrate</td><td>Reconfigure Teams integration using Cloud-native connector post-migration.</td></tr>
+<tr><td>ScriptRunner Groovy actions</td><td>DC-only plugin actions unsupported on Cloud</td><td>Recreate using Cloud ScriptRunner or native automation.</td></tr>
+<tr><td>Flow actors not preserved</td><td>JCMA does not migrate flow actors</td><td>Set actors on all rules post-migration. See "Automation User Updates for Service Projects" page.</td></tr>
+</tbody>
+</table>
+
+<hr/>
+
+<h2>Script Reference</h2>
+<p>Location: <code>~/daybreak-scripts/migrate_automations.py</code></p>
+
+<table>
+<thead>
+<tr><th>Command</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--classify FILE</code></td><td>Classify DC export rules by JCMA migration support level</td></tr>
+<tr><td><code>--validate</code></td><td>Check all Cloud rules against Cloud registries for bad references</td></tr>
+<tr><td><code>--audit</code></td><td>Compare Cloud rules against DC, find fixable ID mismatches</td></tr>
+<tr><td><code>--fix</code></td><td>Apply DC&rarr;Cloud ID mappings to live Cloud rules via API</td></tr>
+<tr><td><code>--repair</code></td><td>Apply manual override mappings for known gaps</td></tr>
+<tr><td><code>--enable-clean</code></td><td>Bulk-enable rules that pass validation</td></tr>
+<tr><td><code>--auto-rescope</code></td><td>Fix project scoping by matching rule names against DC export</td></tr>
+<tr><td><code>--purge</code></td><td>Delete all automation rules on target (use with caution)</td></tr>
+</tbody>
+</table>
